@@ -9,8 +9,8 @@ import sys
 import json
 import os
 
-from.subscribe import SubscriptionRegistry
-from .subscribe import PyclimaxError
+#from .subscribe import SubscriptionRegistry
+#from .subscribe import PyclimaxError
 
 __author__ = 'nihj'
 
@@ -22,7 +22,7 @@ SUBSCRIPTION_MIN_WAIT = 200
 TIMEOUT = SUBSCRIPTION_WAIT
 
 CATEGORY_DIMMER = 'Dimmer'
-CATEGORY_SWITCH = 'Power Switch Meter'
+CATEGORY_POWER_SWITCH_METER = 'Power Switch Meter'
 CATEGORY_TEMPERATURE_SENSOR = 'Temperature Sensor'
 CATEGORY_POWER_METER = 'Power Meter'
 
@@ -40,7 +40,7 @@ if logger_level:
     logger.addHandler(ch)
 logger.debug("DEBUG logging is ON")
 
-def init_controller(url):
+def init_controller(url, username, password):
     """Initialize a controller.
 
     Provides a single global controller for applications that can't do this
@@ -50,9 +50,9 @@ def init_controller(url):
     global _CLIMAX_CONTROLLER
     created = False
     if _CLIMAX_CONTROLLER is None:
-        _CLIMAX_CONTROLLER = ClimaxController(url)
+        _CLIMAX_CONTROLLER = ClimaxController(url, username, password)
         created = True
-        _CLIMAX_CONTROLLER.start()
+        #_CLIMAX_CONTROLLER.start()
     return [_CLIMAX_CONTROLLER, created]
 
 
@@ -80,18 +80,22 @@ class ClimaxController(object):
         self.zwave_version = None
         self.mac = None
 
-        self.subscription_registry = SubscriptionRegistry()
+        #self.subscription_registry = SubscriptionRegistry()
         self.device_id_map = {}
 
     def post_request(self, method, payload, timeout=TIMEOUT):
         """Post a request and return the result."""
-        request_url = self.base_url + "/admin/" + method 
-        return requests.post(requests_url, auth={self.username, self.password}, timeout=timeout, params=payload)
+        requests_url = self.base_url + "/action/" + method 
+        return requests.post(requests_url, auth=(self.username, self.password), timeout=timeout, params=payload)
 
     def get_request(self, method, payload={}, timeout=TIMEOUT):
         """Post a request and return the result."""
-        request_url = self.base_url + "/admin/" + method
-        return requests.get(requests_url, auth={self.username, self.password}, timeout=timeout, params=payload)
+        requests_url = self.base_url + "/action/" + method
+
+        r = requests.get(requests_url, auth=(self.username, self.password), timeout=timeout, params=payload)
+        
+
+        return r
 
     def get_device_by_name(self, device_name):
         """Search the list of connected devices by name.
@@ -144,20 +148,21 @@ class ClimaxController(object):
             device_type = item.get('type_f')
             if CATEGORY_DIMMER in device_type:
                 device = ClimaxDimmer(item, self)
-            elif (CATEGORY_SWITCH in device_type:
+            elif CATEGORY_POWER_SWITCH_METER in device_type:
                 device = ClimaxSwitch(item, self)
             elif (CATEGORY_TEMPERATURE_SENSOR in device_type or
-                CATEGORY_POWER_METER in device_category:
+                CATEGORY_POWER_METER in device_type):
                 device = ClimaxSensor(item, self)
             else:
                 device = ClimaxDevice(item, self)
+            
             self.devices.append(device)
 
         return self.devices
 
     def refresh_data(self):
         """Refresh data from Climax device."""
-        j = self.get_request({'welcomeGet').json()
+        j = self.get_request('welcomeGet').json()
 
         self.version = j.get('version')
         self.zwave_version = j.get('zw_ver')
@@ -165,7 +170,7 @@ class ClimaxController(object):
 
         device_id_map = {}
 
-        j = self.get_request({'deviceListGet').json()
+        j = self.get_request('deviceListGet').json()
 
         devs = j.get('senrows')
         for dev in devs:
@@ -173,71 +178,71 @@ class ClimaxController(object):
 
         return device_id_map
 
-    def get_changed_devices(self, timestamp):
-        """Get data since last timestamp.
+    # def get_changed_devices(self, timestamp):
+    #     """Get data since last timestamp.
 
-        This is done via a blocking call, pass NONE for initial state.
-        """
-        if timestamp is None:
-            payload = {}
-        else:
-            payload = {
-                'timeout': SUBSCRIPTION_WAIT,
-                'minimumdelay': SUBSCRIPTION_MIN_WAIT
-            }
-            payload.update(timestamp)
-        # double the timeout here so requests doesn't timeout before Climax
-        payload.update({
-            'id': 'lu_sdata',
-        })
+    #     This is done via a blocking call, pass NONE for initial state.
+    #     """
+    #     if timestamp is None:
+    #         payload = {}
+    #     else:
+    #         payload = {
+    #             'timeout': SUBSCRIPTION_WAIT,
+    #             'minimumdelay': SUBSCRIPTION_MIN_WAIT
+    #         }
+    #         payload.update(timestamp)
+    #     # double the timeout here so requests doesn't timeout before Climax
+    #     payload.update({
+    #         'id': 'lu_sdata',
+    #     })
 
-        logger.debug("get_changed_devices() requesting payload %s", str(payload))
-        r = self.data_request(payload, TIMEOUT*2)
-        r.raise_for_status()
+    #     logger.debug("get_changed_devices() requesting payload %s", str(payload))
+    #     r = self.data_request(payload, TIMEOUT*2)
+    #     r.raise_for_status()
 
-        # If the Climax disconnects before writing a full response (as lu_sdata
-        # will do when interrupted by a Luup reload), the requests module will
-        # happily return 200 with an empty string. So, test for empty response,
-        # so we don't rely on the JSON parser to throw an exception.
-        if r.text == "":
-            raise PyclimaxError("Empty response from Climax")
+    #     # If the Climax disconnects before writing a full response (as lu_sdata
+    #     # will do when interrupted by a Luup reload), the requests module will
+    #     # happily return 200 with an empty string. So, test for empty response,
+    #     # so we don't rely on the JSON parser to throw an exception.
+    #     if r.text == "":
+    #         raise PyclimaxError("Empty response from Climax")
 
-        # Catch a wide swath of what the JSON parser might throw, within
-        # reason. Unfortunately, some parsers don't specifically return
-        # json.decode.JSONDecodeError, but so far most seem to derive what
-        # they do throw from ValueError, so that's helpful.
-        try:
-            result = r.json()
-        except ValueError as ex:
-            raise PyclimaxError("JSON decode error: " + str(ex))
+    #     # Catch a wide swath of what the JSON parser might throw, within
+    #     # reason. Unfortunately, some parsers don't specifically return
+    #     # json.decode.JSONDecodeError, but so far most seem to derive what
+    #     # they do throw from ValueError, so that's helpful.
+    #     try:
+    #         result = r.json()
+    #     except ValueError as ex:
+    #         raise PyclimaxError("JSON decode error: " + str(ex))
 
-        if not ( type(result) is dict
-                 and 'loadtime' in result and 'dataversion' in result ):
-            raise PyclimaxError("Unexpected/garbled response from Climax")
+    #     if not ( type(result) is dict
+    #              and 'loadtime' in result and 'dataversion' in result ):
+    #         raise PyclimaxError("Unexpected/garbled response from Climax")
 
-        # At this point, all good. Update timestamp and return change data.
-        device_data = result.get('devices')
-        timestamp = {
-            'loadtime': result.get('loadtime'),
-            'dataversion': result.get('dataversion')
-        }
-        return [device_data, timestamp]
+    #     # At this point, all good. Update timestamp and return change data.
+    #     device_data = result.get('devices')
+    #     timestamp = {
+    #         'loadtime': result.get('loadtime'),
+    #         'dataversion': result.get('dataversion')
+    #     }
+    #     return [device_data, timestamp]
 
-    def start(self):
-        """Start the subscription thread."""
-        self.subscription_registry.start()
+    # def start(self):
+    #     """Start the subscription thread."""
+    #     self.subscription_registry.start()
 
-    def stop(self):
-        """Stop the subscription thread."""
-        self.subscription_registry.stop()
+    # def stop(self):
+    #     """Stop the subscription thread."""
+    #     self.subscription_registry.stop()
 
-    def register(self, device, callback):
-        """Register a device and callback with the subscription service."""
-        self.subscription_registry.register(device, callback)
+    # def register(self, device, callback):
+    #     """Register a device and callback with the subscription service."""
+    #     self.subscription_registry.register(device, callback)
 
-    def unregister(self, device, callback):
-        """Unregister a device and callback with the subscription service."""
-        self.subscription_registry.unregister(device, callback)
+    # def unregister(self, device, callback):
+    #     """Unregister a device and callback with the subscription service."""
+    #     self.subscription_registry.unregister(device, callback)
 
 
 class ClimaxDevice(object):  # pylint: disable=R0904
@@ -251,7 +256,7 @@ class ClimaxDevice(object):  # pylint: disable=R0904
         self.name = ''
 
         self.type = self.json_state.get('type_f')
-        self.name = self.json_state.get('name').get('name')
+        self.name = self.json_state.get('name')
 
         if not self.name:
             if self.type:
@@ -293,8 +298,6 @@ class ClimaxDevice(object):  # pylint: disable=R0904
 
         This will call the Climax api to change device state.
         """
-
-        method = 'device' + method
 
         payload = {
             'id': device_id,
@@ -351,6 +354,21 @@ class ClimaxDevice(object):  # pylint: disable=R0904
     def is_dimmable(self):
         """Device is dimmable."""
         return CATEGORY_DIMMER in self.type
+    
+    @property
+    def has_temperature(self):
+        """Device has temperature sensor."""
+        return CATEGORY_TEMPERATURE_SENSOR in self.type
+
+    @property
+    def has_power(self):
+        """Device has temperature sensor."""
+        return CATEGORY_POWER_SWITCH_METER in self.type
+
+    @property
+    def has_energy(self):
+        """Device has temperature sensor."""
+        return CATEGORY_POWER_METER in self.type
 
     @property
     def has_battery(self):
@@ -363,59 +381,6 @@ class ClimaxDevice(object):  # pylint: disable=R0904
         return self.get_value('battery')
 
     @property
-    def level(self):
-        """Get level from Climax."""
-        # Used for dimmers
-        # Have seen formats of "0%"!
-        level = self.get_value('status')
-
-        level = level.strip('On (')
-        try:
-            return int(level.strip('%)'))
-        except (TypeError, AttributeError, ValueError):
-            pass
-        return 0
-
-    @property
-    def temperature(self):
-        """Temperature.
-
-        You can get units from the controller.
-        """
-
-        temp = self.get_value('status')
-        try:
-            return float(temp.strip(' °C'))
-        except (TypeError, AttributeError, ValueError):
-            pass
-        return 0.0
-
-    @property
-    def power(self):
-        """Current power useage in watts"""
-        power = self.get_value('status')
-        
-        power = power.strip('Off, ')
-        power = power.strip('On, ')
-
-        try:
-            return float(power.strip('W'))
-        except (TypeError, AttributeError, ValueError):
-            pass
-        return 0.0
-
-    @property
-    def energy(self):
-        """Energy usage in kwh"""
-        power = self.get_value('status')
-        
-        try:
-            return float(power.strip('kWh'))
-        except (TypeError, AttributeError, ValueError):
-            pass
-        return 0.0
-
-    @property
     def Climax_device_id(self):
         """The ID Climax uses to refer to the device."""
         return self.device_id
@@ -423,7 +388,7 @@ class ClimaxDevice(object):  # pylint: disable=R0904
     @property
     def should_poll(self):
         """Whether polling is needed if using subscriptions for this device."""
-        return False
+        return True
 
 
 class ClimaxSwitch(ClimaxDevice):
@@ -432,7 +397,7 @@ class ClimaxSwitch(ClimaxDevice):
     def set_switch_state(self, state):
         """Set the switch state, also update local state."""
         self.set_device_value(
-            deviceSwitchPSSPost,
+            'deviceSwitchPSSPost',
             self.device_id,
             'switch',
             state)
@@ -447,6 +412,9 @@ class ClimaxSwitch(ClimaxDevice):
 
     def switch_toggle(self):
         """Toggle the switch state."""
+
+        print("Toggling switch")
+
         self.set_switch_state(2)
 
     def is_switched_on(self, refresh=False):
@@ -459,6 +427,20 @@ class ClimaxSwitch(ClimaxDevice):
             self.refresh()
         val = self.get_value('status')
         return 'On' in val
+
+    @property
+    def power(self):
+        """Current power useage in watts"""
+        power = self.get_value('status')
+        
+        power = power.strip('Off, ')
+        power = power.strip('On, ')
+
+        try:
+            return float(power.strip('W'))
+        except (TypeError, AttributeError, ValueError):
+            pass
+        return 0.0
 
 
 class ClimaxDimmer(ClimaxSwitch):
@@ -496,5 +478,40 @@ class ClimaxDimmer(ClimaxSwitch):
             'level',
             percent)
 
+    @property
+    def level(self):
+        """Get level from Climax."""
+        # Used for dimmers
+        level = self.get_value('status')
+
+        level = level.strip('On (')
+        try:
+            return int(level.strip('%)'))
+        except (TypeError, AttributeError, ValueError):
+            pass
+        return 0
+
 class ClimaxSensor(ClimaxDevice):
     """Class to represent a supported sensor."""
+
+    @property
+    def temperature(self):
+        """Temperature in °C."""
+
+        temp = self.get_value('status')
+        try:
+            return float(temp.strip(' °C'))
+        except (TypeError, AttributeError, ValueError):
+            pass
+        return 0.0
+
+    @property
+    def energy(self):
+        """Energy usage in kwh"""
+        power = self.get_value('status')
+        
+        try:
+            return float(power.strip('kWh'))
+        except (TypeError, AttributeError, ValueError):
+            pass
+        return 0.0
