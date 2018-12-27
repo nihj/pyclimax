@@ -8,6 +8,7 @@ import requests
 import sys
 import json
 import os
+from jsondiff import diff
 
 from subscribe import SubscriptionRegistry
 from subscribe import PyclimaxError
@@ -150,6 +151,7 @@ class ClimaxController(object):
 
         logger.debug("get_devices() requesting payload %s", str(payload))
         r = self.get_request('deviceListGet', payload)
+        
         r.raise_for_status()
 
         # If the Climax disconnects before writing a full response (as lu_sdata
@@ -194,9 +196,11 @@ class ClimaxController(object):
         """Refresh data from Climax device."""
         j = self.get_request('welcomeGet').json()
 
-        self.version = j.get('version')
-        self.zwave_version = j.get('zw_ver')
-        self.mac = j.get('mac')
+        welcome_data = j.get('updates')
+
+        self.version = welcome_data.get('version')
+        self.zwave_version = welcome_data.get('zw_ver')
+        self.mac = welcome_data.get('mac')
 
         device_id_map = {}
 
@@ -209,7 +213,10 @@ class ClimaxController(object):
         return device_id_map
 
     def get_changed_devices(self):
-        """Get data since last timestamp."""
+        """
+        Get data from controller and filter out the ones
+        that have changed.
+        """
 
         old_device_data = self.devices
 
@@ -218,20 +225,20 @@ class ClimaxController(object):
         changed_devices = []
 
         for device in new_device_data:
-            found = False
             found_old_device = None
 
             for old_device in old_device_data:
-                if (device.get('id') in old_device.get('id')):
-                    found = True
+                if (device.json_state.get('id') in old_device.json_state.get('id')):
                     found_old_device = old_device
                     break
             
-            if not found:
+            if found_old_device is None:
                 changed_devices.append(device)
-                break
-            
-            for item in             
+                continue
+
+            if diff(device.json_state, found_old_device.json_state):
+                print('Got a diff!')
+                changed_devices.append(device)
 
         return changed_devices
 

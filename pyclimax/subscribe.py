@@ -6,21 +6,8 @@ import time
 import threading
 import requests
 
-# How long to wait before retrying Vera
-SUBSCRIPTION_RETRY = 10
-
-# Vera state codes see http://wiki.micasaverde.com/index.php/Luup_Requests
-STATE_NO_JOB = -1
-STATE_JOB_WAITING_TO_START = 0
-STATE_JOB_IN_PROGRESS = 1
-STATE_JOB_ERROR = 2
-STATE_JOB_ABORTED = 3
-STATE_JOB_DONE = 4
-STATE_JOB_WAITING_FOR_CALLBACK = 5
-STATE_JOB_REQUEUE = 6
-STATE_JOB_PENDING_DATA = 7
-
-STATE_NOT_PRESENT = 999
+# How long to wait before retrying Climax
+SUBSCRIPTION_RETRY = 3
 
 # Get the logger for use in this module
 logger = logging.getLogger(__name__)
@@ -44,12 +31,13 @@ class SubscriptionRegistry(object):
         device: device to be updated by subscription
         callback: callback for notification of changes
         """
+
         if not device:
             logger.error("Received an invalid device: %r", device)
             return
 
         logger.debug("Subscribing to events for %s", device.name)
-        self._devices[device.climax_device_id].append(device)
+        self._devices[device.device_id].append(device)
         self._callbacks[device].append(callback)
 
     def unregister(self, device, callback):
@@ -64,12 +52,12 @@ class SubscriptionRegistry(object):
 
         logger.debug("Removing subscription for {}".format(device.name))
         self._callbacks[device].remove(callback)
-        self._devices[device.climax_device_id].remove(device)
+        self._devices[device.device_id].remove(device)
 
     def _event(self, device_data_list):
         for device_data in device_data_list:
-            device_id = device_data['id']
-            device_list = self._devices.get(int(device_id))
+            device_id = device_data.json_state.get('id')
+            device_list = self._devices.get(device_id)
             if device_list is None:
                 return
             for device in device_list:
@@ -78,39 +66,12 @@ class SubscriptionRegistry(object):
     def _event_device(self, device, device_data):
         if device is None:
             return
-        # Vera can send an update status STATE_NO_JOB but
+        # Climax can send an update status STATE_NO_JOB but
         # with a comment about sending a command
-        state = int(device_data.get('state', STATE_NOT_PRESENT))
-        comment = device_data.get('comment', '')
-        sending = comment.find('Sending') >= 0
-        logger.debug("Event: %s, state %s, %s",
+        logger.debug("Event: %s, %s",
                   device.name,
-                  state,
-                  json.dumps(device_data))
-        if sending and state == STATE_NO_JOB:
-            state = STATE_JOB_WAITING_TO_START
-        if (state == STATE_JOB_IN_PROGRESS and
-                device.__class__.__name__ == 'VeraLock'):
-            # VeraLocks don't complete - so force state
-            state = STATE_JOB_DONE
-        if (
-                state == STATE_JOB_WAITING_TO_START or
-                state == STATE_JOB_IN_PROGRESS or
-                state == STATE_JOB_WAITING_FOR_CALLBACK or
-                state == STATE_JOB_REQUEUE or
-                state == STATE_JOB_PENDING_DATA):
-            return
-        if not (state == STATE_JOB_DONE or
-                state == STATE_NOT_PRESENT or
-                state == STATE_NO_JOB or
-                (state == STATE_JOB_ERROR and
-                    comment.find('Setting user configuration'))):
-            logger.error("Device %s, state %s, %s",
-                      device.name,
-                      state,
-                      comment)
-            return
-        device.update(device_data)
+                  json.dumps(device_data.json_state))
+        device.update(device_data.json_state)
         for callback in self._callbacks.get(device, ()):
             try:
                 callback(device)
@@ -127,9 +88,10 @@ class SubscriptionRegistry(object):
         self._poll_thread.join()
 
     def start(self):
-        """Start a thread to handle Vera blocked polling."""
+        """Start a thread to handle Climax blocked polling."""
+
         self._poll_thread = threading.Thread(target=self._run_poll_server,
-                                             name='Vera Poll Thread')
+                                             name='Climax Poll Thread')
         self._poll_thread.deamon = True
         self._poll_thread.start()
 
@@ -142,12 +104,10 @@ class SubscriptionRegistry(object):
     def _run_poll_server(self):
         from pyclimax import get_controller
         controller = get_controller()
-        timestamp = None
         while not self._exiting:
             try:
-                logger.debug("Polling for Vera changes")
-                device_data, timestamp = (
-                    controller.get_changed_devices(timestamp))
+                logger.debug("Polling for Climax changes")
+                device_data = controller.get_changed_devices()
             except requests.RequestException as ex:
                 logger.debug("Caught RequestException: %s", str(ex))
                 pass
@@ -155,7 +115,7 @@ class SubscriptionRegistry(object):
                 logger.debug("Non-fatal error in poll: %s", str(ex))
                 pass
             except Exception as ex:
-                logger.exception("Vera poll thread general exception: %s",
+                logger.exception("Climax poll thread general exception: %s",
                     str(ex))
                 raise
             else:
@@ -170,9 +130,8 @@ class SubscriptionRegistry(object):
                 continue
 
             # After error, discard timestamp for fresh update. pyclimax issue #89
-            timestamp = None
-            logger.info("Could not poll Vera - will retry in %ss",
+            logger.info("Could not poll Climax - will retry in %ss",
                      SUBSCRIPTION_RETRY)
             time.sleep(SUBSCRIPTION_RETRY)
 
-        logger.info("Shutdown Vera Poll Thread")
+        logger.info("Shutdown Climax Poll Thread")
