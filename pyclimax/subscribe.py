@@ -37,7 +37,7 @@ class SubscriptionRegistry(object):
             return
 
         logger.debug("Subscribing to events for %s", device.name)
-        self._devices[device.device_id].append(device)
+        self._devices[device.climax_device_id].append(device)
         self._callbacks[device].append(callback)
 
     def unregister(self, device, callback):
@@ -52,7 +52,7 @@ class SubscriptionRegistry(object):
 
         logger.debug("Removing subscription for {}".format(device.name))
         self._callbacks[device].remove(callback)
-        self._devices[device.device_id].remove(device)
+        self._devices[device.climax_device_id].remove(device)
 
     def _event(self, device_data_list):
         for device_data in device_data_list:

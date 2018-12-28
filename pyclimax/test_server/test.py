@@ -1,6 +1,6 @@
 import requests
 import time
-import climax as ClimaxApi
+import pyclimax as ClimaxApi
 
 
 def callback(device):

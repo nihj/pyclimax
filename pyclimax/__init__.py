@@ -22,10 +22,10 @@ SUBSCRIPTION_MIN_WAIT = 200
 # Timeout for requests calls, as Climax sometimes just sits on sockets.
 TIMEOUT = SUBSCRIPTION_WAIT
 
-CATEGORY_DIMMER = 'Dimmer'
-CATEGORY_POWER_SWITCH_METER = 'Power Switch Meter'
-CATEGORY_TEMPERATURE_SENSOR = 'Temperature Sensor'
-CATEGORY_POWER_METER = 'Power Meter'
+CATEGORY_DIMMER = 53
+CATEGORY_POWER_SWITCH_METER = 48
+CATEGORY_TEMPERATURE_SENSOR = 20
+CATEGORY_POWER_METER = 50
 
 _CLIMAX_CONTROLLER = None
 
@@ -53,7 +53,7 @@ def init_controller(url, username, password):
     if _CLIMAX_CONTROLLER is None:
         _CLIMAX_CONTROLLER = ClimaxController(url, username, password)
         created = True
-        #_CLIMAX_CONTROLLER.start()
+        _CLIMAX_CONTROLLER.start()
     return [_CLIMAX_CONTROLLER, created]
 
 
@@ -88,13 +88,13 @@ class ClimaxController(object):
     def post_request(self, method, payload, timeout=TIMEOUT):
         """Post a request and return the result."""
         requests_url = self.base_url + "/action/" + method 
-        return requests.post(requests_url, auth=(self.username, self.password), timeout=timeout, params=payload)
+        return requests.post(requests_url, auth=(self.username, self.password), timeout=timeout, data=payload)
 
     def get_request(self, method, payload={}, timeout=TIMEOUT):
         """Post a request and return the result."""
         requests_url = self.base_url + "/action/" + method
 
-        r = requests.get(requests_url, auth=(self.username, self.password), timeout=timeout, params=payload)
+        r = requests.get(requests_url, auth=(self.username, self.password), timeout=timeout, data=payload)
         
 
         return r
@@ -177,13 +177,13 @@ class ClimaxController(object):
         items = result.get('senrows')
 
         for item in items:
-            device_type = item.get('type_f')
-            if CATEGORY_DIMMER in device_type:
+            device_type = item.get('type')
+            if CATEGORY_DIMMER == device_type:
                 device = ClimaxDimmer(item, self)
-            elif CATEGORY_POWER_SWITCH_METER in device_type:
+            elif CATEGORY_POWER_SWITCH_METER == device_type:
                 device = ClimaxSwitch(item, self)
-            elif (CATEGORY_TEMPERATURE_SENSOR in device_type or
-                CATEGORY_POWER_METER in device_type):
+            elif (CATEGORY_TEMPERATURE_SENSOR == device_type or
+                CATEGORY_POWER_METER == device_type):
                 device = ClimaxSensor(item, self)
             else:
                 device = ClimaxDevice(item, self)
@@ -261,19 +261,19 @@ class ClimaxController(object):
 class ClimaxDevice(object):  # pylint: disable=R0904
     """ Class to represent each Climax device."""
 
-    def __init__(self, json_obj, Climax_controller):
+    def __init__(self, json_obj, climax_controller):
         """Setup a Climax device."""
         self.json_state = json_obj
         self.device_id = self.json_state.get('id')
-        self.Climax_controller = Climax_controller
+        self.climax_controller = climax_controller
         self.name = ''
 
-        self.type = self.json_state.get('type_f')
+        self.type = self.json_state.get('type')
         self.name = self.json_state.get('name')
 
         if not self.name:
             if self.type:
-                self.name = ('Climax ' + self.type +
+                self.name = ('Climax ' + str(self.type) +
                              ' ' + str(self.device_id))
             else:
                 self.name = 'Climax Device ' + str(self.device_id)
@@ -292,19 +292,19 @@ class ClimaxDevice(object):  # pylint: disable=R0904
                 self.type,
                 self.name).encode('utf-8')
 
-    def Climax_post_request(self, method, **kwargs):
-        """Perfom a Climax_request for this device."""
+    def climax_post_request(self, method, **kwargs):
+        """Perfom a climax_request for this device."""
         request_payload = {}
         request_payload.update(kwargs)
 
-        return self.Climax_controller.post_request(method, request_payload)
+        return self.climax_controller.post_request(method, request_payload)
     
-    def Climax_get_request(self, method, **kwargs):
-        """Perfom a Climax_request for this device."""
+    def climax_get_request(self, method, **kwargs):
+        """Perfom a climax_request for this device."""
         request_payload = {}
         request_payload.update(kwargs)
 
-        return self.Climax_controller.get_request(method, request_payload)
+        return self.climax_controller.get_request(method, request_payload)
 
     def set_device_value(self, method, device_id, parameter_name, value):
         """Set a variable on the Climax device.
@@ -316,9 +316,9 @@ class ClimaxDevice(object):  # pylint: disable=R0904
             'id': device_id,
             parameter_name: value
         }
-        result = self.Climax_post_request(method, **payload)
+        result = self.climax_post_request(method, **payload)
         logger.debug("set_service_value: "
-                  "result of Climax_request %s with payload %s: %s",
+                  "result of climax_request %s with payload %s: %s",
                   method, payload, result.text)
 
     def get_all_values(self):
@@ -349,7 +349,7 @@ class ClimaxDevice(object):  # pylint: disable=R0904
 
         Only needed if you're not using subscriptions.
         """
-        j = self.Climax_get_request('deviceListGet').json()
+        j = self.climax_get_request('deviceListGet').json()
         devices = j.get('senrows')
         for device_data in devices:
             if device_data.get('id') == self.device_id:
@@ -366,22 +366,22 @@ class ClimaxDevice(object):  # pylint: disable=R0904
     @property
     def is_dimmable(self):
         """Device is dimmable."""
-        return CATEGORY_DIMMER in self.type
+        return CATEGORY_DIMMER == self.type
     
     @property
     def has_temperature(self):
         """Device has temperature sensor."""
-        return CATEGORY_TEMPERATURE_SENSOR in self.type
+        return CATEGORY_TEMPERATURE_SENSOR == self.type
 
     @property
     def has_power(self):
         """Device has temperature sensor."""
-        return CATEGORY_POWER_SWITCH_METER in self.type
+        return CATEGORY_POWER_SWITCH_METER == self.type
 
     @property
     def has_energy(self):
         """Device has temperature sensor."""
-        return CATEGORY_POWER_METER in self.type
+        return CATEGORY_POWER_METER == self.type
 
     @property
     def has_battery(self):
@@ -394,7 +394,7 @@ class ClimaxDevice(object):  # pylint: disable=R0904
         return self.get_value('battery')
 
     @property
-    def Climax_device_id(self):
+    def climax_device_id(self):
         """The ID Climax uses to refer to the device."""
         return self.device_id
 
