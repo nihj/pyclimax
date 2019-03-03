@@ -493,6 +493,14 @@ class ClimaxDimmer(ClimaxSwitch):
             'level',
             percent)
 
+        # Weird behavior in Climax makes the dim values
+        # not being set until after second call.
+        self.set_device_value(
+            'deviceSwitchDimmerPost',
+            self.device_id,
+            'level',
+            percent)
+
     @property
     def level(self):
         """Get level from Climax."""
